@@ -22,9 +22,9 @@ export default [
             '@stylistic/arrow-spacing': ['error'],
             '@stylistic/brace-style': ['error', '1tbs', { allowSingleLine: true }],
             '@stylistic/comma-dangle': ['error', 'never'],
-            '@stylistic/comma-spacing': ['error', { before: false, after: true }],
+            '@stylistic/comma-spacing': ['off', { before: false, after: true }],
             '@stylistic/generator-star-spacing': 'off',
-            '@stylistic/keyword-spacing': ['error'],
+            '@stylistic/keyword-spacing': ['off'],
             '@stylistic/max-len': ['error', { ignoreUrls: true, ignoreStrings: true, code: 120 }],
             '@stylistic/multiline-ternary': 'off',
             '@stylistic/no-multiple-empty-lines': ['error', { max: 1, maxEOF: 0, maxBOF: 1 }],
@@ -41,7 +41,7 @@ export default [
             '@stylistic/space-in-parens': ['error', 'never'],
             '@stylistic/space-infix-ops': ['error'],
 
-            'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+            'no-unused-vars': ['off', { argsIgnorePattern: '^_' }],
 
             'no-void': 'off',
             'one-var': 'off',
