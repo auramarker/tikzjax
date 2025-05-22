@@ -43,7 +43,7 @@ expose({
             input =
                 Object.entries(texPackages).reduce((usePackageString, thisPackage) => {
                     usePackageString +=
-                        '\\usepackage' + (thisPackage[1] ? `[${thisPackage[1]}]` : '') + `{${thisPackage[0]}}`;
+                        '\\usepackage' + (thisPackage[1] ? `[${thisPackage[1]}]` : '') + `{${thisPackage[0]}}\n`;
                     return usePackageString;
                 }, '') +
                 (dataset.tikzLibraries ? `\\usetikzlibrary{${dataset.tikzLibraries}}` : '') +
@@ -52,6 +52,8 @@ expose({
         }
 
         if (dataset.showConsole) library.setShowConsole();
+
+        console.log(input);
 
         library.writeFileSync('input.tex', Buffer.from(input));
 

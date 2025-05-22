@@ -46,7 +46,7 @@ if (!window.TikzJax) {
 
 class ElementTikjax extends HTMLElement {
     static get observedAttributes() {
-        return ['code', 'tikid'];
+        return ['tikid'];
     }
 
     constructor() {
@@ -63,9 +63,8 @@ class ElementTikjax extends HTMLElement {
         const style = document.createElement('style');
         style.textContent = `
             :host {
-                display: block;
-                width: 100%;
-                height: 100%;
+                display: flex;
+                justify-content: center;
             }
         `;
         this.shadowRoot.appendChild(style);
@@ -129,17 +128,18 @@ class ElementTikjax extends HTMLElement {
         if (!this.tikId) {
             this.tikId = 'tikz' + Math.floor(Math.random() * 1000000);
         }
-        this.code = this.textContent;
+        this.code = this.childNodes[0]?.nodeValue || this.textContent;
+
         // 初始化渲染
-        this.renderTikz();
+        // this.renderTikz();
     }
 
     attributeChangedCallback(name, oldValue, newValue) {
         if (oldValue !== newValue) {
             switch (name) {
-                case 'code':
-                    this.code = newValue;
-                    break;
+                // case 'code':
+                //     this.code = newValue;
+                //     break;
                 case 'tikid':
                     this.tikId = newValue;
                     break;
@@ -174,14 +174,18 @@ class ElementTikjax extends HTMLElement {
 
         try {
             const tikzSource = this.tidyTikzSource(this.code);
-            console.log(tikzSource);
+
             const start = Date.now();
             this.html = await (
                 await texWorker
-            ).texify(tikzSource, {
-                texPackages: '{"chemfig": ""}',
-                showConsole: true
-            });
+            ).texify(
+                tikzSource,
+                {
+                    texPackages: '{"chemfig": ""}',
+                    showConsole: true
+                },
+                false
+            );
             this.dispatchEvent(
                 new CustomEvent('tikzjax-render-complete', {
                     bubbles: true,
