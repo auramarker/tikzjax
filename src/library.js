@@ -118,14 +118,12 @@ const openSync = (filename, mode) => {
                     // If it isn't found there then try to load it directly assuming it is a URL. In this case it is
                     // also assumed that the file is not a gzip compressed file.
                     try {
-                        const data = await fileLoader(`tex_files/${filename}.gz`);
-                        filesystem[filename] = data;
+                        filesystem[filename] = await fileLoader(`tex_files/${filename}.gz`);
                     } catch {
                         try {
                             const response = await fetch(filename);
                             if (response.ok) {
-                                const data = await response.text();
-                                filesystem[filename] = data;
+                                filesystem[filename] = await response.text();
                             } else {
                                 throw new Error(`Unable to load ${filename}.`);
                             }
@@ -385,7 +383,7 @@ export const getfilesize = (length, pointer) => {
 
     filename = filename.replace(/ +$/g, '');
     filename = filename.replace(/^\*/, '');
-
+    console.log('getfilesize', filename);
     if (filename == 'TeXformats:TEX.POOL') filename = 'tex.pool';
 
     if (openSync(filename, 'r') !== -1) return filesystem[filename]?.length ?? 0;

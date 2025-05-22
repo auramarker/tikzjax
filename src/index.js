@@ -1,5 +1,4 @@
 import { Worker, spawn, Thread } from 'threads';
-import { openDB } from 'idb';
 import '../css/container.css';
 
 // document.currentScript polyfill
@@ -11,162 +10,7 @@ if (document.currentScript === undefined) {
 // Determine where this script was loaded from. This is used to find the files to load.
 const url = new URL(document.currentScript.src);
 
-const dbPromise = openDB('TikzJax', 2, {
-    upgrade(db) {
-        db.createObjectStore('svgImages');
-    }
-});
-const getItem = async (key) => (await dbPromise).get('svgImages', key);
-const setItem = async (key, val) => (await dbPromise).put('svgImages', val, key);
-
-const createHash = async (string) => {
-    return Array.from(new Uint8Array(await window.crypto.subtle.digest('SHA-1', new TextEncoder().encode(string))))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
-};
-
-const processQueue = [];
-let observer = null;
 let texWorker;
-
-const processTikzScripts = async (scripts) => {
-    const currentProcessPromise = new Promise((resolve) => {
-        const texQueue = [];
-
-        const loadCachedOrSetupLoader = async (elt) => {
-            elt.sourceHash = await createHash(JSON.stringify(elt.dataset) + elt.childNodes[0].nodeValue);
-
-            const savedSVG = elt.dataset.disableCache ? undefined : await getItem(elt.sourceHash);
-
-            if (savedSVG) {
-                const svg = document.createRange().createContextualFragment(savedSVG).firstChild;
-                elt.replaceWith(svg);
-
-                // Emit a bubbling event that the svg is ready.
-                const loadFinishedEvent = new Event('tikzjax-load-finished', { bubbles: true });
-                svg.dispatchEvent(loadFinishedEvent);
-            } else {
-                texQueue.push(elt);
-
-                const width = parseFloat(elt.dataset.width) || 75;
-                const height = parseFloat(elt.dataset.height) || 75;
-
-                // Replace the elt with a spinning loader.
-                elt.loader = document
-                    .createRange()
-                    .createContextualFragment(
-                        '<svg version="1.1" ' +
-                            'xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ' +
-                            `width="${width}pt" height="${height}pt" viewBox="0 0 ${width} ${height}">` +
-                            `<rect width="${width}" height="${height}" rx="5pt" ry="5pt" ` +
-                            'fill="#000" fill-opacity="0.2"/>' +
-                            `<circle cx="${width / 2}" cy="${height / 2}" r="15" stroke="#f3f3f3" ` +
-                            'fill="none" stroke-width="3"/>' +
-                            `<circle cx="${width / 2}" cy="${height / 2}" r="15" stroke="#3498db" ` +
-                            'fill="none" stroke-width="3" stroke-linecap="round">' +
-                            '<animate attributeName="stroke-dasharray" begin="0s" dur="2s" ' +
-                            'values="56.5 37.7;1 93.2;56.5 37.7" keyTimes="0;0.5;1" repeatCount="indefinite">' +
-                            '</animate>' +
-                            '<animate attributeName="stroke-dashoffset" begin="0s" dur="2s" ' +
-                            'from="0" to="188.5" repeatCount="indefinite"></animate></circle>' +
-                            '</svg>'
-                    ).firstChild;
-                elt.replaceWith(elt.loader);
-            }
-        };
-
-        const process = async (elt) => {
-            const text = elt.childNodes[0].nodeValue;
-            const loader = elt.loader;
-
-            // Check for a saved svg again in case this script tag is a duplicate of another.
-            const savedSVG = elt.dataset.disableCache ? undefined : await getItem(elt.sourceHash);
-
-            if (savedSVG) {
-                const svg = document.createRange().createContextualFragment(savedSVG).firstChild;
-                loader.replaceWith(svg);
-
-                // Emit a bubbling event that the svg is ready.
-                const loadFinishedEvent = new Event('tikzjax-load-finished', { bubbles: true });
-                svg.dispatchEvent(loadFinishedEvent);
-
-                return;
-            }
-
-            let html = '';
-            try {
-                html = await texWorker.texify(text, Object.assign({}, elt.dataset));
-            } catch (err) {
-                console.log(err);
-                // Show the browser's image not found icon.
-                loader.outerHTML = '<img src="//invalid.site/img-not-found.png">';
-                return;
-            }
-
-            const ids = html.match(/\bid="pgf[^"]*"/g);
-            if (ids) {
-                // Sort the ids from longest to shortest.
-                ids.sort((a, b) => {
-                    return b.length - a.length;
-                });
-                for (const id of ids) {
-                    const pgfIdString = id.replace(/id="pgf(.*)"/, '$1');
-                    html = html.replaceAll('pgf' + pgfIdString, `pgf${elt.sourceHash}${pgfIdString}`);
-                }
-            }
-
-            const svg = document.createRange().createContextualFragment(html).firstChild;
-            svg.role = 'img';
-
-            if (elt.dataset.ariaLabel) {
-                const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-                title.textContent = elt.dataset.ariaLabel;
-                svg.prepend(title);
-            }
-
-            loader.replaceWith(svg);
-
-            if (!elt.dataset.disableCache) {
-                try {
-                    await setItem(elt.sourceHash, svg.outerHTML);
-                } catch (err) {
-                    console.log(err);
-                }
-            }
-
-            // Emit a bubbling event that the svg image generation is complete.
-            const loadFinishedEvent = new Event('tikzjax-load-finished', { bubbles: true });
-            svg.dispatchEvent(loadFinishedEvent);
-        };
-
-        (async () => {
-            // First check the session storage to see if an image is already cached,
-            // and if so load that.  Otherwise show a spinning loader, and push the
-            // element onto the queue to run tex on.
-            for (const element of scripts) {
-                await loadCachedOrSetupLoader(element);
-            }
-
-            // End here if there is nothing to run tex on.
-            if (!texQueue.length) return resolve();
-
-            texWorker = await texWorker;
-
-            processQueue.push(currentProcessPromise);
-            if (processQueue.length > 1) await processQueue[processQueue.length - 2];
-
-            // Run tex on the text in each of the scripts that wasn't cached.
-            for (const element of texQueue) {
-                await process(element);
-            }
-
-            processQueue.shift();
-
-            return resolve();
-        })();
-    });
-    return currentProcessPromise;
-};
 
 const initializeWorker = async () => {
     const urlRoot = url.href.replace(/\/tikzjax\.js(?:\?.*)?$/, '');
@@ -174,7 +18,7 @@ const initializeWorker = async () => {
     // Set up the worker thread.
     const tex = await spawn(new Worker(`${urlRoot}/run-tex.js`));
     Thread.events(tex).subscribe((e) => {
-        if (e.type == 'message' && typeof e.data === 'string') console.log(e.data);
+        if (e.type === 'message' && typeof e.data === 'string') console.log(e.data);
     });
 
     // Load the assembly and core dump.
@@ -187,37 +31,7 @@ const initializeWorker = async () => {
     return tex;
 };
 
-const initialize = async () => {
-    // Process any text/tikz scripts that are on the page initially.
-    processTikzScripts(
-        Array.prototype.slice
-            .call(document.getElementsByTagName('script'))
-            .filter((e) => e.getAttribute('type') === 'text/tikz')
-    );
-
-    // If a text/tikz script is added to the page later, then process those.
-    observer = new MutationObserver((mutationsList) => {
-        const newTikzScripts = [];
-        for (const mutation of mutationsList) {
-            for (const node of mutation.addedNodes) {
-                if (node.tagName && node.tagName.toLowerCase() == 'script' && node.type == 'text/tikz')
-                    newTikzScripts.push(node);
-                else if (node.getElementsByTagName)
-                    newTikzScripts.push.apply(
-                        newTikzScripts,
-                        Array.prototype.slice
-                            .call(node.getElementsByTagName('script'))
-                            .filter((e) => e.getAttribute('type') === 'text/tikz')
-                    );
-            }
-        }
-        processTikzScripts(newTikzScripts);
-    });
-    observer.observe(document.getElementsByTagName('body')[0], { childList: true, subtree: true });
-};
-
 const shutdown = async () => {
-    if (observer) observer.disconnect();
     await Thread.terminate(await texWorker);
 };
 
@@ -226,9 +40,189 @@ if (!window.TikzJax) {
 
     texWorker = initializeWorker();
 
-    if (document.readyState == 'complete') initialize();
-    else window.addEventListener('load', initialize);
-
     // Stop the mutation observer and close the thread when the window is closed.
     window.addEventListener('unload', shutdown);
 }
+
+class ElementTikjax extends HTMLElement {
+    static get observedAttributes() {
+        return ['code', 'tikid'];
+    }
+
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+
+        // 初始化属性的内部值
+        this._code = '';
+        this._tikId = '';
+        this._rendering = false;
+        this._html = '';
+
+        // 创建样式元素
+        const style = document.createElement('style');
+        style.textContent = `
+            :host {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+        `;
+        this.shadowRoot.appendChild(style);
+
+        // 创建用于内容的 div
+        this.contentDiv = document.createElement('div');
+        this.shadowRoot.appendChild(this.contentDiv);
+    }
+
+    // 定义属性的 getter 和 setter，以实现响应式
+    get code() {
+        return this._code;
+    }
+
+    set code(value) {
+        const oldValue = this._code;
+        if (oldValue !== value) {
+            this._code = value;
+            // 当 code 改变时，重新渲染 TikZ
+            this.renderTikz();
+        }
+    }
+
+    get tikId() {
+        return this._tikId;
+    }
+
+    set tikId(value) {
+        const oldValue = this._tikId;
+        if (oldValue !== value) {
+            this._tikId = value;
+            this.contentDiv.id = this._tikId; // 更新 contentDiv 的 ID
+        }
+    }
+
+    get rendering() {
+        return this._rendering;
+    }
+
+    set rendering(value) {
+        const oldValue = this._rendering;
+        if (oldValue !== value) {
+            this._rendering = value;
+            this.render(); // 当 rendering 状态改变时，重新渲染
+        }
+    }
+
+    get html() {
+        return this._html;
+    }
+
+    set html(value) {
+        const oldValue = this._html;
+        if (oldValue !== value) {
+            this._html = value;
+            this.render(); // 当 html 改变时，重新渲染
+        }
+    }
+
+    connectedCallback() {
+        if (!this.tikId) {
+            this.tikId = 'tikz' + Math.floor(Math.random() * 1000000);
+        }
+        this.code = this.textContent;
+        // 初始化渲染
+        this.renderTikz();
+    }
+
+    attributeChangedCallback(name, oldValue, newValue) {
+        if (oldValue !== newValue) {
+            switch (name) {
+                case 'code':
+                    this.code = newValue;
+                    break;
+                case 'tikid':
+                    this.tikId = newValue;
+                    break;
+            }
+        }
+    }
+
+    render() {
+        if (this.rendering) {
+            this.contentDiv.textContent = 'Rendering...';
+            this.contentDiv.removeAttribute('class'); // 移除可能的 tikzjax-content 类
+        } else {
+            this.contentDiv.innerHTML = this.html; // 使用 innerHTML 插入渲染后的 HTML
+            this.contentDiv.className = 'tikzjax-content'; // 添加类名
+            this.contentDiv.id = this.tikId; // 确保 ID 正确
+        }
+    }
+
+    async renderTikz() {
+        if (this.rendering) return;
+
+        this.dispatchEvent(
+            new CustomEvent('tikzjax-render-start', {
+                bubbles: true,
+                composed: true,
+                detail: {
+                    tikId: this.tikId
+                }
+            })
+        );
+        this.rendering = true;
+
+        try {
+            const tikzSource = this.tidyTikzSource(this.code);
+            console.log(tikzSource);
+            const start = Date.now();
+            this.html = await (
+                await texWorker
+            ).texify(tikzSource, {
+                texPackages: '{"chemfig": ""}',
+                showConsole: true
+            });
+            this.dispatchEvent(
+                new CustomEvent('tikzjax-render-complete', {
+                    bubbles: true,
+                    composed: true,
+                    detail: { tikId: this.tikId, cost: Date.now() - start }
+                })
+            );
+        } catch (e) {
+            console.error(e);
+            this.dispatchEvent(
+                new CustomEvent('tikzjax-render-error', {
+                    bubbles: true,
+                    composed: true,
+                    detail: { tikId: this.tikId, error: e }
+                })
+            );
+        } finally {
+            this.rendering = false;
+        }
+    }
+
+    /**
+     * 简化 TikZ 代码
+     * @param tikzSource
+     * @returns {string}
+     */
+    tidyTikzSource(tikzSource) {
+        // 移除不标准的空格
+        const remove = '&nbsp;';
+        tikzSource = tikzSource.replaceAll(remove, '');
+
+        let lines = tikzSource.split('\n');
+
+        // Trim 每一行
+        lines = lines.map((line) => line.trim());
+
+        // 删除空行
+        lines = lines.filter((line) => line);
+
+        return lines.join('\n');
+    }
+}
+
+customElements.define('element-tikjax', ElementTikjax);
