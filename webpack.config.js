@@ -7,7 +7,7 @@ const ESLintPlugin = require('eslint-webpack-plugin');
 module.exports = (_env, argv) => {
     process.env.NODE_ENV = argv.mode ?? 'development';
 
-    const config = {
+    return {
         entry: { tikzjax: './src/index.js', 'run-tex': './src/run-tex.js' },
         output: { path: path.resolve(__dirname, 'dist'), filename: '[name].js' },
         devServer: { static: path.join(__dirname, './public'), port: 9090 },
@@ -27,6 +27,4 @@ module.exports = (_env, argv) => {
             new ESLintPlugin({ configType: 'flat' })
         ]
     };
-
-    return config;
 };
