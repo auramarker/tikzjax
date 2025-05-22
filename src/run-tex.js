@@ -35,19 +35,21 @@ expose({
         code = await loadDecompress('tex.wasm.gz');
         coredump = new Uint8Array(await loadDecompress('core.dump.gz'), 0, library.pages * 65536);
     },
-    async texify(input, dataset) {
+    async texify(input, dataset, simpleInput = false) {
         // Set up the tex input file.
-        const texPackages = dataset.texPackages ? JSON.parse(dataset.texPackages) : {};
+        if (!simpleInput) {
+            const texPackages = dataset.texPackages ? JSON.parse(dataset.texPackages) : {};
 
-        input =
-            Object.entries(texPackages).reduce((usePackageString, thisPackage) => {
-                usePackageString +=
-                    '\\usepackage' + (thisPackage[1] ? `[${thisPackage[1]}]` : '') + `{${thisPackage[0]}}`;
-                return usePackageString;
-            }, '') +
-            (dataset.tikzLibraries ? `\\usetikzlibrary{${dataset.tikzLibraries}}` : '') +
-            (dataset.addToPreamble || '') +
-            `\\begin{document}\n${input}\n\\end{document}\n`;
+            input =
+                Object.entries(texPackages).reduce((usePackageString, thisPackage) => {
+                    usePackageString +=
+                        '\\usepackage' + (thisPackage[1] ? `[${thisPackage[1]}]` : '') + `{${thisPackage[0]}}`;
+                    return usePackageString;
+                }, '') +
+                (dataset.tikzLibraries ? `\\usetikzlibrary{${dataset.tikzLibraries}}` : '') +
+                (dataset.addToPreamble || '') +
+                `\\begin{document}\n${input}\n\\end{document}\n`;
+        }
 
         if (dataset.showConsole) library.setShowConsole();
 
