@@ -4,7 +4,7 @@ import eslintConfigPrettier from 'eslint-config-prettier';
 import stylistic from '@stylistic/eslint-plugin';
 
 export default [
-    { ignores: ['**/dist/*'] },
+    { ignores: ['**/dist/*', '**/svgo.browser.js'] },
     { files: ['**/*.{js,mjs,cjs,ts}'] },
     pluginJs.configs.recommended,
     {
