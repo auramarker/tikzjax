@@ -1,10 +1,62 @@
 import { Worker, spawn, Thread } from 'threads';
 import '../css/container.css';
+import { openDB } from 'idb';
 
-// document.currentScript polyfill
-if (document.currentScript === undefined) {
-    const scripts = document.getElementsByTagName('script');
-    document.currentScript = scripts[scripts.length - 1];
+const dbPromise = openDB('TikzJax', 2, {
+    upgrade(db) {
+        db.createObjectStore('svgImages');
+        db.createObjectStore('svgImagesAccessTime');
+    }
+});
+const getItem = async (key, storeName = 'svgImages') => (await dbPromise).get(storeName, key);
+const setItem = async (key, val, storeName = 'svgImages') => (await dbPromise).put(storeName, val, key);
+
+const createHash = async (string) => {
+    return Array.from(new Uint8Array(await window.crypto.subtle.digest('SHA-1', new TextEncoder().encode(string))))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+};
+
+async function getSvgFromCache(tikzSource) {
+    const hash = await createHash(tikzSource);
+    const svg = await getItem(hash);
+    if (svg) {
+        console.log('SVG from cache');
+        await setItem(hash, Date.now(), 'svgImagesAccessTime');
+        return svg;
+    }
+    return null;
+}
+
+async function setSvgToCache(tikzSource, svg) {
+    const hash = await createHash(tikzSource);
+    await setItem(hash, svg);
+}
+
+async function deleteSvgFromCache(sourceOrAccessBefore = null) {
+    if (typeof sourceOrAccessBefore === 'string') {
+        const hash = await createHash(sourceOrAccessBefore);
+        await (await dbPromise).delete('svgImages', hash);
+        await (await dbPromise).delete('svgImagesAccessTime', hash);
+    } else if (typeof sourceOrAccessBefore === 'number') {
+        const tx = (await dbPromise).transaction('svgImagesAccessTime', 'readwrite');
+        const keys = await tx.store.getAllKeys();
+        for (const key of keys) {
+            const accessTime = await tx.store.get(key);
+            if (accessTime < sourceOrAccessBefore) {
+                await tx.store.delete(key);
+                await (await dbPromise).delete('svgImages', key);
+            }
+        }
+    } else {
+        // If no argument is provided, delete all items in the cache
+        const tx = (await dbPromise).transaction('svgImages', 'readwrite');
+        const keys = await tx.store.getAllKeys();
+        for (const key of keys) {
+            await tx.store.delete(key);
+            await (await dbPromise).delete('svgImagesAccessTime', key);
+        }
+    }
 }
 
 // Determine where this script was loaded from. This is used to find the files to load.
@@ -44,9 +96,28 @@ if (!window.TikzJax) {
     window.addEventListener('unload', shutdown);
 }
 
+async function renderTexToSvg(source, enableCache = false) {
+    const svg = await getSvgFromCache(source);
+    if (svg) return svg;
+
+    texWorker = await texWorker;
+    const svgData = await texWorker.texify(
+        source,
+        {
+            texPackages: '{"chemfig": ""}',
+            showConsole: true
+        },
+        false
+    );
+    if (enableCache) {
+        await setSvgToCache(source, svgData);
+    }
+    return svgData;
+}
+
 class ElementTikjax extends HTMLElement {
     static get observedAttributes() {
-        return ['tikid'];
+        return ['tikid', 'enable-cache'];
     }
 
     constructor() {
@@ -58,6 +129,7 @@ class ElementTikjax extends HTMLElement {
         this._tikId = '';
         this._rendering = false;
         this._html = '';
+        this._enableCache = false;
 
         // 创建样式元素
         const style = document.createElement('style');
@@ -100,6 +172,17 @@ class ElementTikjax extends HTMLElement {
         }
     }
 
+    get enableCache() {
+        return this._enableCache;
+    }
+
+    set enableCache(value) {
+        const oldValue = this._enableCache;
+        if (oldValue !== value) {
+            this._enableCache = value;
+        }
+    }
+
     get rendering() {
         return this._rendering;
     }
@@ -125,16 +208,18 @@ class ElementTikjax extends HTMLElement {
     }
 
     connectedCallback() {
+        // setTimeout(() => {
+        // 初始化属性
+        // this.initFromAttribute();
         if (!this.tikId) {
             this.tikId = 'tikz' + Math.floor(Math.random() * 1000000);
         }
         this.code = this.childNodes[0]?.nodeValue || this.textContent;
-
-        // 初始化渲染
-        // this.renderTikz();
+        // }, 0); // 确保在 DOM 完全加载后执行
     }
 
     attributeChangedCallback(name, oldValue, newValue) {
+        console.warn(name, oldValue, newValue);
         if (oldValue !== newValue) {
             switch (name) {
                 // case 'code':
@@ -142,6 +227,9 @@ class ElementTikjax extends HTMLElement {
                 //     break;
                 case 'tikid':
                     this.tikId = newValue;
+                    break;
+                case 'enable-cache':
+                    this.enableCache = newValue === 'true';
                     break;
             }
         }
@@ -160,7 +248,7 @@ class ElementTikjax extends HTMLElement {
 
     async renderTikz() {
         if (this.rendering) return;
-
+        console.log('enable cache', this.enableCache);
         this.dispatchEvent(
             new CustomEvent('tikzjax-render-start', {
                 bubbles: true,
@@ -176,16 +264,7 @@ class ElementTikjax extends HTMLElement {
             const tikzSource = this.tidyTikzSource(this.code);
 
             const start = Date.now();
-            this.html = await (
-                await texWorker
-            ).texify(
-                tikzSource,
-                {
-                    texPackages: '{"chemfig": ""}',
-                    showConsole: true
-                },
-                false
-            );
+            this.html = await renderTexToSvg(tikzSource, this.enableCache);
             this.dispatchEvent(
                 new CustomEvent('tikzjax-render-complete', {
                     bubbles: true,

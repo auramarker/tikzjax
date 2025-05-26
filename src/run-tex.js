@@ -53,8 +53,6 @@ expose({
 
         if (dataset.showConsole) library.setShowConsole();
 
-        console.log(input);
-
         library.writeFileSync('input.tex', Buffer.from(input));
 
         // Set up the tex web assembly.
