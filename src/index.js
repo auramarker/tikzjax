@@ -39,7 +39,7 @@ if (!window.TikzJax) {
     window.addEventListener('unload', shutdown);
 }
 
-async function renderTexToSvg(source, enableCache = false) {
+async function renderTexToSvg(source, texPackages = '{"chemfig": ""}') {
     // const svg = await getSvgFromCache(source);
     // if (svg) return svg;
 
@@ -50,7 +50,7 @@ async function renderTexToSvg(source, enableCache = false) {
     return await texWorker.texify(
         source,
         {
-            texPackages: '{"chemfig": ""}',
+            texPackages,
             showConsole: true
         },
         false
@@ -85,8 +85,8 @@ Queue.prototype = {
     constructor: Queue,
     runing: false,
     queue: [],
-    enqueue(tikzSource, resolve, reject, enableCache = false) {
-        this.queue.push({ tikzSource, resolve, reject, enableCache });
+    enqueue(tikzSource, resolve, reject, texPackages) {
+        this.queue.push({ tikzSource, resolve, reject, texPackages });
         if (this.queue.length > 0) {
             this.processQueue();
         }
@@ -95,14 +95,14 @@ Queue.prototype = {
         if (this.runing) return; // 如果正在处理队列，则不再处理
         this.runing = true;
         while (this.queue.length > 0) {
-            const { tikzSource, resolve, reject, enableCache } = this.queue.shift();
+            const { tikzSource, resolve, reject, texPackages } = this.queue.shift();
             try {
-                const svg = await renderTexToSvg(tikzSource, enableCache);
+                const svg = await renderTexToSvg(tikzSource, texPackages);
                 console.log('TikZ to SVG conversion completed.', svg.length);
                 // 优化 SVG
                 const optimizedSvg = await SVGO.optimize(svg);
-                console.log('SVG optimization completed.', optimizedSvg.data.length);
-                resolve(optimizedSvg.data);
+                console.log('SVG optimization completed.', optimizedSvg.data?.length);
+                resolve((optimizedSvg.data || svg).replaceAll(/"#000"|"black"/g, '"currentColor"'));
             } catch (error) {
                 reject(error);
             }
@@ -113,8 +113,17 @@ Queue.prototype = {
 
 const tikzQueue = new Queue();
 
-window.tikzToSvg = (tikzSource, enableCache = false) => {
+window.tikzToSvg = (tikzSource, texPackages = window.tikzUtils.texPackages) => {
     const { resolve, reject, promise } = Promise.withResolvers();
-    tikzQueue.enqueue(tidyTikzSource(tikzSource), resolve, reject, enableCache);
+    tikzQueue.enqueue(tidyTikzSource(tikzSource), resolve, reject, texPackages);
     return promise;
+};
+
+window.tikzUtils = {
+    tikzRe: /\\chemfig\{[^}]+}|\\begin\{tikzpicture}|\\begin\{tikzcd}/,
+    shouldUseTikz(input) {
+        if (typeof input !== 'string') return false;
+        return window.tikzUtils.tikzRe.test(input);
+    },
+    texPackages: '{"chemfig": "", "tikz-cd": "", "pgfplots": ""}'
 };
